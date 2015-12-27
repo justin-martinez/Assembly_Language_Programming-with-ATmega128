@@ -1,0 +1,276 @@
+/*
+ * Section_7_Transmit.asm
+ * Created: 11/24/2015 7:13:45 PM
+ * Author: martijus
+ */ 
+ ;***********************************************************
+;*	Section 7 Remotely Operated Vehicle
+;*	Remote Control
+;*	This is the TRANSMIT file for Lab 7 of ECE 375
+;***********************************************************
+;*	 Author: Justin Martinez
+;*	   Date: 11/24/2015
+;***********************************************************
+.include "m128def.inc"			; Include definition file
+;***********************************************************
+;*	Internal Register Definitions and Constants
+;***********************************************************
+;General Registers:
+.def	mpr = r16				; Multi-Purpose Register (lower)
+.def    tmp = r20				; Multi-Purpose Register (upper)
+;for wait, polling
+.def    waitcnt = r17           ; Wait Loop Counter
+.def    ilcnt = r18             ; Inner Loop Counter
+.def    olcnt = r19             ; Outer Loop Counter
+;forUART
+.def	rec = r22				; UARTreceive Temp Register 
+.def	tran = r23				; UART Transmit Temp Register
+
+
+;Tekbot Pin Definitions:
+.equ	WskrR = 0				; Right Whisker Input Bit
+.equ	WskrL = 1				; Left Whisker Input Bit
+.equ	EngEnR = 4				; Right Engine Enable Bit
+.equ	EngEnL = 7				; Left Engine Enable Bit
+.equ	EngDirR = 5				; Right Engine Direction Bit
+.equ	EngDirL = 6				; Left Engine Direction Bit
+;for wait
+.equ    WTime = 50             ; Time to wait in wait loop
+; Use these commands between the remote and TekBot
+; MSB = 1 thus:
+; commands are shifted right by one and ORed with 0b10000000 = $80
+.equ	MovFwd =  ($80|1<<(EngDirR-1)|1<<(EngDirL-1))	;0b10110000 Move Forwards Command
+.equ	MovBck =  ($80|$00)								;0b10000000 Move Backwards Command
+.equ	TurnR =   ($80|1<<(EngDirL-1))					;0b10100000 Turn Right Command
+.equ	TurnL =   ($80|1<<(EngDirR-1))					;0b10010000 Turn Left Command
+.equ	Halt =    ($80|1<<(EngEnR-1)|1<<(EngEnL-1))		;0b11001000 Halt Command
+.equ	Freez =   ($80|$F8)								;0b11111000 Freeze Command
+;for imputs
+.equ	B0 = 0b11111110				;
+.equ	B1 = 0b11111101
+.equ	B2 = 0b11111011
+.equ	B3 = 0b11110111
+.equ	B4 = 0b11101111
+.equ	B5 = 0b11011111
+.equ	B6 = 0b10111111
+.equ	B7 = 0b01111111
+;bot ID
+.equ	BotID = 0b01111111 ;This remote controls bot ID# 011111111
+;***********************************************************
+;*	Start of Code Segment
+;***********************************************************
+.cseg							; Beginning of code segment
+;-----------------------------------------------------------
+; Interrupt Vectors
+;-----------------------------------------------------------
+.org	$0000					; Beginning of IVs
+		rjmp 	INIT			; Reset interrupt
+
+;- USART receive
+.org    $003C
+rcall USART_Receive
+reti
+
+.org	$0046					; End of Interrupt Vectors
+
+;-----------------------------------------------------------
+; Program Initialization
+;-----------------------------------------------------------
+INIT:
+	;Stack Pointer
+	ldi     mpr, low(RAMEND)
+    out     SPL, mpr			; Load SPL with low byte of RAMEND
+    ldi     mpr, high(RAMEND)
+    out     SPH, mpr			; Load SPH with high byte of RAMEND
+
+	;I/O Ports
+	; Initialize Port B for output
+    ldi     mpr, $00        ; Initialize Port B for outputs
+    out     PORTB, mpr      ; Port B outputs low
+    ldi     mpr, $ff        ; Set Port B Directional Register
+    out     DDRB, mpr       ; for output
+
+    ; Initialize PortD for inputs
+    ldi     mpr, $FF			; Initialize PortD for inputs
+    out     PORTD, mpr			; with Tri-State
+    ldi     mpr, $00			; Set PortD Directional Register
+    out     DDRD, mpr			; for inputs
+
+	
+	;USART1: Set baud rate, enable, and format data communication
+
+	;Set baud rate at 2400bps UBBR1, UCSR1B/C
+	; UBRR1 Bod rate control register1
+    ldi mpr, high(416)		;given 16MHz clk, U2X =1 then UBRR = 832 given 0% error
+    sts UBRR1H, mpr
+    ldi mpr, low(416)
+    sts UBRR1L, mpr
+
+	;Enable transmitter
+	ldi r16, (1<<RXCIE1|1<<RXEN1|1<<TXEN1) ; RXEN (Receiver enable) TXEN (Transmit enable)
+    sts UCSR1B, mpr
+
+	;Set frame format: 8 data bits, 2 stop bits
+	ldi mpr, (0<<UMSEL1|1<<USBS1|1<<UCSZ11|1<<UCSZ10)
+    sts UCSR1C, mpr
+	
+	;External Interrupts NOTE: must initialize both EICRA and EICRB
+	; Set the Interrupt Sense Control to low level
+	ldi mpr, $00												// ISCn1/0 {00 == The low level of INTn generates an interrupt request.}
+    sts EICRA, mpr												
+
+	;other
+	ldi   tmp, $00
+	; Turn on interrupts
+	sei
+
+;-----------------------------------------------------------
+; Main Program
+;-----------------------------------------------------------
+MAIN:
+
+; Clear lds
+        clr mpr
+        out PORTB, mpr
+
+        ldi   mpr, $00
+
+		;Go left command
+        in    mpr, PIND       ; Get input from Port D
+        cpi   mpr, B0
+        breq   BUTTON0        ; Left
+
+		;Go right command
+        in    mpr, PIND       ; Get input from Port D
+        cpi   mpr, B1
+        breq   BUTTON1        ; Right
+
+		
+		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+		; Buttons 2 & 3 are reserved for UART
+		;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;;
+
+		;Go forward command
+        in    mpr, PIND       ; Get input from Port D
+        cpi   mpr, B4
+        breq   BUTTON4        ; forward
+
+		
+		;Go backward command
+        in    mpr, PIND       ; Get input from Port D
+        cpi   mpr, B5
+        breq   BUTTON5  ; backward
+
+		;Freeze command
+        in    mpr, PIND       ; Get input from Port D
+        cpi   mpr, B6
+        breq   BUTTON6        ; Freeze
+
+		;Stop command
+        in    mpr, PIND       ; Get input from Port D
+        cpi   mpr, B7
+        breq   BUTTON7        ; Halt
+
+        ; Clear lds
+        clr mpr
+        out PORTB, mpr
+
+		rjmp	MAIN	; Everything is done in interrupt. 
+
+;***********************************************************
+;*	Functions and Subroutines
+;***********************************************************
+BUTTON0:  ;Left Command $0002 PORTD PIN0
+        
+        ldi mpr, BotID			; Load Robot ID
+        call USART_Transmit		; Send Robot ID
+		ldi mpr, TurnL			; Load Left Command
+        call USART_Transmit		; Send Left Command
+        ret
+
+BUTTON1:  ;Right Command $0004 PORTD PIN1
+        ldi mpr, BotID			; Load Robot ID
+        call USART_Transmit		; Send Robot ID
+		ldi mpr, TurnR			; Load Right Command
+        call USART_Transmit		; Send Right Command
+        ret
+
+BUTTON4: ;Forward Command $0006 PORTD PIN2
+        ldi mpr, BotID			; Load Robot ID
+        call USART_Transmit		; Send Robot ID
+		ldi mpr, MovFwd			; Load Forward Command
+        call USART_Transmit		; Send Forward Command
+        ret
+
+BUTTON5: ;Backward Command $0008 PORTD PIN3
+        ldi mpr, BotID			; Load Robot ID
+        call USART_Transmit		; Send Robot ID
+		ldi mpr, MovBck			; Load Backward Command
+        call USART_Transmit		; Send Backward Command
+        ret
+
+BUTTON6: ; Freeze Command 
+        ldi mpr, BotID			; Load Robot ID
+        call USART_Transmit		; Send Robot ID
+		ldi mpr, Freez			; Load Freeze Command
+        call USART_Transmit		; Send Freeze Command
+        ret
+
+BUTTON7: ; Stop Command 
+		ldi mpr, BotID			; Load Robot ID
+        call USART_Transmit		; Send Robot ID
+		ldi mpr, Halt			; Load Stop Command
+        call USART_Transmit		; Send Stop Command
+        ret
+
+USART_Transmit:
+    lds tran, UCSR1A	; Load status of USART1
+    sbrs tran, UDRE1
+
+    ; Loop until transmit data buffer is ready
+    rjmp USART_Transmit
+
+    ; Send data
+    sts UDR1, mpr		; Move data to transmit data buffer
+	out PORTB,mpr
+	;call Wait
+    ldi waitcnt, WTime			; Wait for 1 second
+	rcall Wait
+    ret
+
+; USART Receive
+USART_Receive:
+    ; Wait for data to be received
+    lds rec, UCSR1A
+    sbrs rec, RXC1
+    rjmp USART_Receive
+
+    ; Get and return receive data from receive buffer
+    lds rec, UDR1
+    ret
+Wait:
+        push    waitcnt         ; Save wait register
+        push    ilcnt           ; Save ilcnt register
+        push    olcnt           ; Save olcnt register
+
+Loop:   ldi     olcnt, 224      ; load olcnt register
+OLoop:  ldi     ilcnt, 237      ; load ilcnt register
+ILoop:  dec     ilcnt           ; decrement ilcnt
+        brne    ILoop           ; Continue Inner Loop
+        dec     olcnt       ; decrement olcnt
+        brne    OLoop           ; Continue Outer Loop
+        dec     waitcnt     ; Decrement wait 
+        brne    Loop            ; Continue Wait loop    
+
+        pop     olcnt       ; Restore olcnt register
+        pop     ilcnt       ; Restore ilcnt register
+        pop     waitcnt     ; Restore wait register
+        ret             ; Return from subroutine
+
+;***********************************************************
+;*	Stored Program Data
+;***********************************************************
+
+;***********************************************************
+;*	Additional Program Includes
+;***********************************************************
