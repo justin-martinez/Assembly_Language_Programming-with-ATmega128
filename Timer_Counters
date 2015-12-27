@@ -1,0 +1,180 @@
+ ;* ECE375_Section_6.asm
+ ;*  Created: 11/12/2015 10:35:48 PM
+ ;***********************************************************
+;*	ECE 375 Sectin 6 Lab	Timer/Counters
+;* In this lab, you will need to write a short assembly program 
+;* that uses both of the 8-bit timers in Fast PWM mode. By varying 
+;* the duty cycle of the output PWM waveforms, you will be able 
+;* to modify the speed of the TekBot’s motors.
+;*	
+;***********************************************************
+;*	 Author: Justin Martinez
+;*	   Date: 11/12/2015
+;***********************************************************
+
+.include "m128def.inc"			; Include definition file
+
+;***********************************************************
+;*	Internal Register Definitions and Constants [x] Done
+;***********************************************************
+.def	mpr = r16				; Multipurpose register
+.def	top = r18
+.def	temp = r19
+.def	bottom = r20
+.def	speed_level = r22
+
+.equ	EngEnR = 4				; right Engine Enable Bit
+.equ	EngEnL = 7				; left Engine Enable Bit
+.equ	EngDirR = 5				; right Engine Direction Bit
+.equ	EngDirL = 6				; left Engine Direction Bit
+
+;***********************************************************
+;*	Start of Code Segment	[x] Done
+;***********************************************************
+.cseg							; beginning of code segment
+
+;/////////////////////////////////////////////////////////////
+;These macros are the values to make the TekBot Move.
+;/////////////////////////////////////////////////////////////
+
+.equ	MovFwd = (1<<EngDirR|1<<EngDirL)	; Move Forwards Command
+.equ	MovBck = $00						; Move Backwards Command
+.equ	TurnR = (1<<EngDirL)				; Turn Right Command
+.equ	TurnL = (1<<EngDirR)				; Turn Left Command
+.equ	Halt = (1<<EngEnR|1<<EngEnL)		; Halt Command
+;***********************************************************
+;*	Interrupt Vectors	[x] Done
+;***********************************************************
+.org	$0000
+		rjmp	INIT			; reset interrupt
+
+		; place instructions in interrupt vectors here, if needed
+
+		.org $0002				; INT0 Pin0, PORTD
+		rcall Faster			; Call for increase speed function
+		reti 
+
+		.org $0004				; INT1 Pin1, PORTD
+		rcall Slower			; Call for decrease speed function
+		reti 
+
+.org	$0046					; end of interrupt vectors
+
+;***********************************************************
+;*	Program Initialization
+;***********************************************************
+INIT:
+		; Initialize the Stack Pointer
+		ldi mpr, low(RAMEND)
+		out SPL, mpr
+		ldi mpr, high(RAMEND)
+		out SPH, mpr
+
+		; Configure I/O ports:
+		ldi mpr,$FF				;
+		out DDRB, mpr			; Enable register B bits
+		ldi mpr, $00
+		out PORTB, mpr			; set Port B as output 
+
+		ldi mpr, (0<<INT0)|(0<<INT1)		; sets pin 0 and pin 1 for speed control
+		out DDRD, mpr						; Enable register D bits
+		ldi mpr, $FF
+		out PORTD, mpr						; set Port D as input 
+
+		; Configure External Interrupts, if needed
+		ldi mpr, (1<<ISC11)|(0<<ISC10)|(1<<ISC01)|(0<<ISC00)			; {1,0} sets interrupt for falling edge
+		sts EICRA, mpr 
+
+		ldi mpr, (1<< INT1)|(1<<INT0)	;Enable interrupt mask
+		out EIMSK, mpr
+
+		; Configure 8-bit Timer/Counters
+		; WGM01:00 == {1,1} for Fast PWM prescaler. CS02:00 == {1,1,1} for no prescaler. COM{01,00} 11 for Set OC0 on compare match, clear OC0 at BOTTOM
+		ldi mpr,(1<< WGM01)|(1<< WGM00 )|(1<<COM01)|(1<<COM00)|(0<< CS02 )|(0<< CS01 )|(1<< CS00 ) 
+		out TCCR0, mpr
+		out TCCR2, mpr		
+
+		; Set TekBot to Move Forward (1<<EngDirR|1<<EngDirL)
+		ldi		mpr, MovFwd		; Load Move Foward Command
+		out		PORTB, mpr		; Send command to motors
+
+		;Set top and bottom
+		ldi bottom, $00
+		ldi top, $FF
+		
+		; Set initial speed, display on Port B
+		ldi mpr,$77	 ;119 is speed 8 e.g. half-speed
+		out OCR0, mpr
+		out OCR2, mpr
+
+		ldi speed_level, $08
+		rcall update
+
+		; Enable global interrupts (if any are used)
+		sei
+
+;***********************************************************
+;*	Main Program
+;***********************************************************
+MAIN:
+		rjmp	MAIN			; return to top of MAIN
+;***********************************************************
+;*	Functions and Subroutines
+;***********************************************************
+;***********************************************************
+;*	Func: Template function header
+;*	Desc: Cut and paste this and fill in the info at the 
+;*		  beginning of your functions
+;-----------------------------------------------------------
+
+Faster:
+		in mpr, OCR0		; Read the current speed 
+		ldi temp, $11 
+		cp top, mpr			; iff at top do nothing
+		breq Idle
+		add mpr, temp		; +17 resolution
+		out OCR0, mpr		; else increment +17
+		out OCR2, mpr
+
+		inc speed_level		;increment the speed count
+		rjmp update			; update speed
+		ret	
+
+Slower:
+		in mpr, OCR0		; Read the current speed 
+		cp bottom, mpr		; iff at bottom do nothing
+		breq Idle
+		subi mpr, $11		; -17 resolution 
+		out OCR0, mpr		; else decrement -17
+		out OCR2, mpr
+
+		dec speed_level		; decrements the speed count
+		rjmp update
+		ret
+
+Idle:
+		ret
+
+Update:	; Bit shift four bits to output speed level
+
+		in temp, PINB		; temp gets PORTB
+
+		bst speed_level,0	; set 3:0 bits in temp with speed level
+		bld temp,0
+		bst speed_level,1
+		bld temp,1
+		bst speed_level,2
+		bld temp,2
+		bst speed_level,3
+		bld temp,3
+
+		out PORTB, temp
+		ret
+;***********************************************************
+;*	Stored Program Data
+;***********************************************************
+		; Enter any stored data you might need here
+;***********************************************************
+;*	Additional Program Includes
+;***********************************************************
+		; Not needed
