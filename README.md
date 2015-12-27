@@ -1,6 +1,6 @@
 # Assembly_Language_Programming-with-ATmega128
 
-ECE 375 Oregon State University Lab Projects:
+ECE 375 Oregon State University Lab Projects: \n
 Lab 1: Introduction to AVR Development Tools.
 Lab 2: C Code to Assembler Code to Machine Code to TekBot.
 Lab 3: Data Manipulation and The LCD Display.
