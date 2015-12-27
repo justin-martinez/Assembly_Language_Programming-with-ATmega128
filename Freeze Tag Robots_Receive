@@ -1,0 +1,392 @@
+/*
+ * Section_7_Receive.asm
+ *  Created: 11/26/2015 11:05:49 PM
+ *   Author: martijus
+ */ 
+ ;***********************************************************
+;*	Section 7 Remotely Operated Vehicle
+;*	Receiver Robot
+;*	This is the RECEIVE file for Lab 7 of ECE 375
+;***********************************************************
+;*	 Author: Justin Martinez
+;*	   Date: 11/26/2015
+;***********************************************************
+
+.include "m128def.inc"			; Include definition file
+
+;***********************************************************
+;*	Internal Register Definitions and Constants
+;***********************************************************
+.def	mpr = r16				; Multi-Purpose Register
+.def	temp = r20				; Alt Multi-Purpose Register
+.def	HitCount = r21
+.def	FrzCount = r24
+
+;Timer Counter Registers:
+.def	waitcnt = r17			; Wait Loop Counter
+.def	ilcnt = r18				; Inner Loop Counter
+.def	olcnt = r19				; Outer Loop Counter
+
+;UART Registers: 
+.def	rec = r22				; UART Receive Temp Register
+.def	tran = r23				; UART Transmit Temp Register
+
+;Timer Counter Definitions:
+.equ	WTime = 100				; Time To Wait
+
+;TekBot Pin Definitions:
+.equ	WskrR = 0				; Right Whisker Input Bit
+.equ	WskrL = 1				; Left Whisker Input Bit
+.equ	EngEnR = 4				; Right Engine Enable Bit
+.equ	EngEnL = 7				; Left Engine Enable Bit
+.equ	EngDirR = 5				; Right Engine Direction Bit
+.equ	EngDirL = 6				; Left Engine Direction Bit
+
+;Signal input Definitions:
+.equ	FREEZE = 0b11111000
+.equ    FROZEN = 0b01010101		; Makes bot freeze
+
+.equ	BotID = 0b01111111;(Enter you group ID here (8bits)); Unique XD ID (MSB = 0)
+
+;/////////////////////////////////////////////////////////////
+;These macros are the values to make the TekBot Move.
+;/////////////////////////////////////////////////////////////
+
+.equ	MovFwd =  (1<<EngDirR|1<<EngDirL)	;0b01100000 Move Forwards Command
+.equ	MovBck =  $00						;0b00000000 Move Backwards Command
+.equ	TurnR =   (1<<EngDirL)				;0b01000000 Turn Right Command
+.equ	TurnL =   (1<<EngDirR)				;0b00100000 Turn Left Command
+.equ	Halt =    (1<<EngEnR|1<<EngEnL)		;0b10010000 Halt Command
+
+;***********************************************************
+;*	Start of Code Segment
+;***********************************************************
+.cseg							; Beginning of code segment
+
+;-----------------------------------------------------------
+; Interrupt Vectors
+;-----------------------------------------------------------
+.org	$0000					; Beginning of IVs
+		rjmp 	INIT			; Reset interrupt
+
+;- Left whisker
+.org $0002
+rcall HitRight ; Call hit right function
+reti
+
+
+;- Right whisker
+.org $0004
+rcall HitLeft ; Call hit left function
+reti
+
+;- USART receive
+.org    $003C
+rcall USART_Receive
+reti
+
+.org	$0046					; End of Interrupt Vectors
+
+;-----------------------------------------------------------
+; Program Initialization
+;-----------------------------------------------------------
+INIT:
+	;Stack Pointer
+	ldi		mpr, low(RAMEND)
+	out		SPL, mpr		; Load SPL with low byte of RAMEND
+	ldi		mpr, high(RAMEND)
+	out		SPH, mpr		; Load SPH with high byte of RAMEND
+	;I/O Ports
+	; Initialize Port B for output
+	ldi		mpr, $00		; Initialize Port B for outputs
+	out		PORTB, mpr		; Port B outputs low
+	ldi		mpr, $FF		; Set Port B Directional Register
+	out		DDRB, mpr		; for output
+
+	; Initialize Port D for inputs
+	ldi		mpr, $FF		; Initialize Port D for inputs
+	out		PORTD, mpr		; with Tri-State
+	ldi		mpr, $00		; Set Port D Directional Register
+	out		DDRD, mpr		; for inputs
+	;USART1
+	;Set baudrate at 2400bps
+	; UBRR1 Bod rate control register1[x]
+	ldi mpr, high(416)		
+	sts UBRR1H, mpr
+	ldi mpr, low(416)
+	sts UBRR1L, mpr
+
+	;Enable receiver and enable receive interrupts
+	ldi mpr, (1<<RXCIE1|1<<RXEN1|1<<TXEN1) ; RXEN (Receiver enable) TXEN (Transmit enable)
+    sts UCSR1B, mpr
+
+	;Set frame format: 8 data bits, 2 stop bits[x]
+	ldi mpr, (0<<UMSEL1|1<<USBS1|1<<UCSZ11|1<<UCSZ10)
+    sts UCSR1C, mpr
+
+	;External Interrupts
+	ldi mpr, (1 <<ISC41)|(0 <<ISC40)|(1 <<ISC51)|(0 <<ISC50)	// ISC 4/5 {10 == the falling edge between two samples.}
+    out EICRB, mpr
+	; Set the Interrupt Sense Control to low level
+	ldi mpr, $02												// Falling edge
+    sts EICRA, mpr
+
+	;Set the External Interrupt Mask[x]
+	ldi mpr, $FF								// Enable INT0:7 to interrupt
+    out EIMSK, mpr
+	
+	; Set the Interrupt Sense Control to falling edge[x]
+    ldi mpr, (1 <<ISC41)|(0 <<ISC40)|(1 <<ISC51)|(0 <<ISC50)
+    out EICRB, mpr
+	
+	;Set robot to intially be stopped
+	ldi mpr, Halt
+	out PORTB, mpr
+
+	;Other
+	clr HitCount	; Set hit count to zero
+	clr FrzCount
+	sei
+
+;-----------------------------------------------------------
+; Main Program: 
+;-----------------------------------------------------------
+MAIN:
+        rjmp	MAIN
+
+;***********************************************************
+;*	Functions and Subroutines
+;***********************************************************
+USART_Receive:
+
+		; Wait for data to be received
+		lds rec, UCSR1A
+		sbrs rec, RXC1
+		rjmp USART_Receive
+
+		; Get data from receive buffer
+		lds		rec, UDR1
+
+		;Check for Frozen command
+		cpi   rec, FROZEN
+		breq  DO_FROZEN
+
+		;Check for command from botID remote
+		cpi		rec, BotID
+		breq	EXECUTE
+		ret
+
+EXECUTE: 
+		;Wait for data to be received
+		lds				rec, UCSR1A
+		sbrs			rec, RXC1
+		rjmp			EXECUTE
+
+		;Read command
+		lds rec,		UDR1
+
+		;Check for send freeze command
+		cpi   rec, FREEZE
+		breq  SENDFREEZE
+
+		;remove 7th bit
+		ldi mpr,0b10000000
+		eor rec,mpr
+		out PORTB, rec
+		ret
+
+SENDFREEZE: ;Send Freeze command to other bots
+		push	mpr				; Save mpr register
+		push	waitcnt			; Save wait register
+		in		mpr, SREG		; Get status register
+		push	mpr				; Save status register
+		inc FrzCount
+		
+		ldi mpr, FROZEN			; Load FROZEN Command
+        rcall USART_Transmit		; Send FROZEN Command
+
+		in		mpr, PINB		; Get status register
+		mov		rec,mpr			; Reset last bot command
+
+		pop		mpr				; Get status register
+		out		SREG, mpr		; Restore status register
+		pop		waitcnt			; Restore wait register
+		pop		mpr				; Restore mpr
+		ret						; Return from subroutine
+
+DO_FROZEN:
+		in		temp, PINB		; Get status register
+		push	mpr			; Save mpr register
+		push	waitcnt			; Save wait register
+		in		mpr, SREG	; Save program state
+		push	mpr			;
+		
+		;Update hit count
+		inc		HitCount
+
+		; Freeze for 5 seconds
+		ldi		mpr, FROZEN		
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime; Wait
+		call	Wait
+		ldi		mpr, Halt		
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime; Wait
+		call	Wait
+		ldi		mpr, FROZEN		
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime; Wait
+		call	Wait
+		ldi		mpr, Halt		
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime; Wait
+		call	Wait
+		ldi		mpr, FROZEN		
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime; Wait
+		call	Wait
+		ldi		mpr, Halt		
+		out		PORTB, mpr		; Send command to port
+		cpi		FrzCount,0b00000001
+		breq	REDUCE
+		;Check for third hit
+		cpi		HitCount,0b00000011
+		brsh	LOOP_FOREVER
+
+		out		PORTB, temp		; Restore status register
+		pop		mpr		; Restore program state
+		out		SREG, mpr	;
+		pop		waitcnt		; Restore wait register
+		pop		mpr		; Restore mpr
+		ret
+
+REDUCE:
+		dec HitCount
+		dec FrzCount
+		ret
+
+LOOP_FOREVER:
+	ldi mpr, $FF
+	out PORTB, mpr
+    ldi waitcnt, 20; Wait
+    call Wait
+	ldi mpr, $00
+	out PORTB, mpr
+	ldi waitcnt, 20; Wait
+    call Wait
+    rjmp LOOP_FOREVER
+
+
+USART_Transmit:
+	lds tran, UCSR1A	; Load status of USART1
+    sbrs tran, UDRE1
+
+    ; Loop until transmit data buffer is ready
+    rjmp USART_Transmit
+
+    ; Send data
+    sts UDR1, mpr		; Move data to transmit data buffer
+	;out PORTB,mpr
+    ;call Wait
+    ;ldi waitcnt, WTime			; Wait for 1 second
+	;rcall Wait
+	ret						; Return from subroutine
+
+
+;----------------------------------------------------------------
+; Sub:	HitRight
+; Desc:	Handles functionality of the TekBot when the right whisker
+;		is triggered.
+;----------------------------------------------------------------
+HitRight:
+		in		temp, PINB		; Get status register
+		push	mpr			; Save mpr register
+		push	waitcnt			; Save wait register
+		in		mpr, SREG	; Save program state
+		push	mpr			;
+
+		; Move Backwards for a second
+		ldi		mpr, MovBck		; Load Move Backwards command
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime	; Wait for 1 second
+		rcall	Wait			; Call wait function
+
+		; Turn left for a second
+		ldi		mpr, TurnL		; Load Turn Left Command
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime	; Wait for 1 second
+		rcall	Wait			; Call wait function
+
+		out		PORTB, temp		; Restore status register
+		pop		mpr		; Restore program state
+		out		SREG, mpr	;
+		pop		waitcnt		; Restore wait register
+		pop		mpr		; Restore mpr
+		ret
+
+;----------------------------------------------------------------
+; Sub:	HitLeft
+; Desc:	Handles functionality of the TekBot when the left whisker
+;		is triggered.
+;----------------------------------------------------------------
+HitLeft:
+		in		temp, PINB		; Get status register
+		push	mpr			; Save mpr register
+		push	waitcnt			; Save wait register
+		in		mpr, SREG	; Save program state
+		push	mpr			;
+
+		; Move Backwards for a second
+		ldi		mpr, MovBck		; Load Move Backwards command
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime	; Wait for 1 second
+		rcall	Wait			; Call wait function
+
+		; Turn right for a second
+		ldi		mpr, TurnR		; Load Turn Left Command
+		out		PORTB, mpr		; Send command to port
+		ldi		waitcnt, WTime	; Wait for 1 second
+		rcall	Wait			; Call wait function
+
+		out		PORTB, temp		; Restore status register
+		pop		mpr		; Restore program state
+		out		SREG, mpr	;
+		pop		waitcnt		; Restore wait register
+		pop		mpr		; Restore mpr
+		ret
+
+;----------------------------------------------------------------
+; Sub:	Wait
+; Desc:	A wait loop that is 16 + 159975*waitcnt cycles or roughly 
+;		waitcnt*10ms.  Just initialize wait for the specific amount 
+;		of time in 10ms intervals. Here is the general eqaution
+;		for the number of clock cycles in the wait loop:
+;			((3 * ilcnt + 3) * olcnt + 3) * waitcnt + 13 + call
+;----------------------------------------------------------------
+Wait:
+		push	waitcnt			; Save wait register
+		push	ilcnt			; Save ilcnt register
+		push	olcnt			; Save olcnt register
+
+Loop:	ldi		olcnt, 224		; load olcnt register
+OLoop:	ldi		ilcnt, 237		; load ilcnt register
+ILoop:	dec		ilcnt			; decrement ilcnt
+		brne	ILoop			; Continue Inner Loop
+		dec		olcnt			; decrement olcnt
+		brne	OLoop			; Continue Outer Loop
+		dec		waitcnt			; Decrement wait 
+		brne	Loop			; Continue Wait loop	
+
+		pop		olcnt			; Restore olcnt register
+		pop		ilcnt			; Restore ilcnt register
+		pop		waitcnt			; Restore wait register
+		ret						; Return from subroutine
+;***********************************************************
+;*	Stored Program Data
+;***********************************************************
+
+
+
+;***********************************************************
+;*	Additional Program Includes
+;***********************************************************
