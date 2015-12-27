@@ -1,0 +1,6 @@
+Complete the following objectives:
+• Connect your AVR microcontroller board to a TekBot (optional).
+• Create a new Atmel Studio project.
+• Download and compile the sample AVR Assembly source code.
+• Understand how to run and operate the Universal Programmer / Teensy 2.0.
+• Upload and run the sample program on the TekBots AVR microcontroller board.
