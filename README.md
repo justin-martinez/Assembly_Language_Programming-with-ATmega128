@@ -1,6 +1,6 @@
 # Assembly_Language_Programming-with-ATmega128
 
-"ECE 375 Oregon State University Lab Projects:"
+                                  ECE 375 Oregon State University Lab Projects:
 
 Lab 1: Introduction to AVR Development Tools.
 
