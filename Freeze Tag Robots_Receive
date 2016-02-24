@@ -23,7 +23,7 @@
 .def	FrzCount = r24
 
 ;Timer Counter Registers:
-.def	waitcnt = r17			; Wait Loop Counter
+.def	waitcnt = r17				; Wait Loop Counter
 .def	ilcnt = r18				; Inner Loop Counter
 .def	olcnt = r19				; Outer Loop Counter
 
@@ -44,7 +44,7 @@
 
 ;Signal input Definitions:
 .equ	FREEZE = 0b11111000
-.equ    FROZEN = 0b01010101		; Makes bot freeze
+.equ    FROZEN = 0b01010101			; Makes bot freeze
 
 .equ	BotID = 0b01111111;(Enter you group ID here (8bits)); Unique XD ID (MSB = 0)
 
@@ -53,15 +53,15 @@
 ;/////////////////////////////////////////////////////////////
 
 .equ	MovFwd =  (1<<EngDirR|1<<EngDirL)	;0b01100000 Move Forwards Command
-.equ	MovBck =  $00						;0b00000000 Move Backwards Command
-.equ	TurnR =   (1<<EngDirL)				;0b01000000 Turn Right Command
-.equ	TurnL =   (1<<EngDirR)				;0b00100000 Turn Left Command
+.equ	MovBck =  $00				;0b00000000 Move Backwards Command
+.equ	TurnR =   (1<<EngDirL)			;0b01000000 Turn Right Command
+.equ	TurnL =   (1<<EngDirR)			;0b00100000 Turn Left Command
 .equ	Halt =    (1<<EngEnR|1<<EngEnL)		;0b10010000 Halt Command
 
 ;***********************************************************
 ;*	Start of Code Segment
 ;***********************************************************
-.cseg							; Beginning of code segment
+.cseg						; Beginning of code segment
 
 ;-----------------------------------------------------------
 ; Interrupt Vectors
@@ -128,11 +128,11 @@ INIT:
 	ldi mpr, (1 <<ISC41)|(0 <<ISC40)|(1 <<ISC51)|(0 <<ISC50)	// ISC 4/5 {10 == the falling edge between two samples.}
     out EICRB, mpr
 	; Set the Interrupt Sense Control to low level
-	ldi mpr, $02												// Falling edge
+	ldi mpr, $02						// Falling edge
     sts EICRA, mpr
 
 	;Set the External Interrupt Mask[x]
-	ldi mpr, $FF								// Enable INT0:7 to interrupt
+	ldi mpr, $FF						// Enable INT0:7 to interrupt
     out EIMSK, mpr
 	
 	; Set the Interrupt Sense Control to falling edge[x]
@@ -197,28 +197,28 @@ EXECUTE:
 
 SENDFREEZE: ;Send Freeze command to other bots
 		push	mpr				; Save mpr register
-		push	waitcnt			; Save wait register
+		push	waitcnt				; Save wait register
 		in		mpr, SREG		; Get status register
 		push	mpr				; Save status register
 		inc FrzCount
 		
 		ldi mpr, FROZEN			; Load FROZEN Command
-        rcall USART_Transmit		; Send FROZEN Command
+        	rcall USART_Transmit		; Send FROZEN Command
 
 		in		mpr, PINB		; Get status register
 		mov		rec,mpr			; Reset last bot command
 
-		pop		mpr				; Get status register
+		pop		mpr			; Get status register
 		out		SREG, mpr		; Restore status register
 		pop		waitcnt			; Restore wait register
-		pop		mpr				; Restore mpr
-		ret						; Return from subroutine
+		pop		mpr			; Restore mpr
+		ret					; Return from subroutine
 
 DO_FROZEN:
-		in		temp, PINB		; Get status register
+		in	temp, PINB		; Get status register
 		push	mpr			; Save mpr register
 		push	waitcnt			; Save wait register
-		in		mpr, SREG	; Save program state
+		in	mpr, SREG		; Save program state
 		push	mpr			;
 		
 		;Update hit count
@@ -268,27 +268,27 @@ REDUCE:
 LOOP_FOREVER:
 	ldi mpr, $FF
 	out PORTB, mpr
-    ldi waitcnt, 20; Wait
-    call Wait
+    	ldi waitcnt, 20; Wait
+    	call Wait
 	ldi mpr, $00
 	out PORTB, mpr
 	ldi waitcnt, 20; Wait
-    call Wait
-    rjmp LOOP_FOREVER
+    	call Wait
+	 rjmp LOOP_FOREVER
 
 
 USART_Transmit:
 	lds tran, UCSR1A	; Load status of USART1
-    sbrs tran, UDRE1
+	 sbrs tran, UDRE1
 
-    ; Loop until transmit data buffer is ready
-    rjmp USART_Transmit
+    	; Loop until transmit data buffer is ready
+    	rjmp USART_Transmit
 
-    ; Send data
-    sts UDR1, mpr		; Move data to transmit data buffer
+	; Send data
+    	sts UDR1, mpr		; Move data to transmit data buffer
 	;out PORTB,mpr
-    ;call Wait
-    ;ldi waitcnt, WTime			; Wait for 1 second
+	;call Wait
+	;ldi waitcnt, WTime			; Wait for 1 second
 	;rcall Wait
 	ret						; Return from subroutine
 
